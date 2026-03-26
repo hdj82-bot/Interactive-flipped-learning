@@ -1,15 +1,10 @@
-from __future__ import annotations
+"""Pydantic 응답/요청 스키마."""
 
-from enum import Enum
+from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-
-class TaskStatus(str, Enum):
-    PENDING = "PENDING"
-    PROCESSING = "PROCESSING"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
+from app.models.video import VideoStatus
 
 
 class SlideContent(BaseModel):
@@ -24,22 +19,23 @@ class SlideScript(BaseModel):
     script: str = Field(description="생성된 발화 스크립트")
 
 
-class PipelineResult(BaseModel):
-    task_id: str
-    status: TaskStatus
-    total_slides: int = 0
-    slides: list[SlideContent] = Field(default_factory=list)
-    scripts: list[SlideScript] = Field(default_factory=list)
-    error: str | None = None
-
-
 class UploadResponse(BaseModel):
     task_id: str
     message: str = "파이프라인이 시작되었습니다."
 
 
-class TaskStatusResponse(BaseModel):
+class SlideResponse(BaseModel):
+    slide_number: int
+    text_content: str
+    speaker_notes: str
+    script: str | None = None
+    is_approved: bool = False
+
+
+class VideoDetailResponse(BaseModel):
     task_id: str
-    status: TaskStatus
-    progress: str | None = None
-    result: PipelineResult | None = None
+    filename: str
+    status: VideoStatus
+    total_slides: int
+    slides: list[SlideResponse] = Field(default_factory=list)
+    error_message: str | None = None

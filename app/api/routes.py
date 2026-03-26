@@ -1,27 +1,32 @@
-"""FastAPI 라우터 — PPT 업로드 및 태스크 상태 조회."""
+"""FastAPI 라우터 — PPT 업로드, 파이프라인 상태 조회, 스크립트 승인."""
 
 from __future__ import annotations
 
-import shutil
 import uuid
-from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models.schemas import TaskStatus, TaskStatusResponse, UploadResponse
-from app.tasks.pipeline import process_pptx
+from app.database import get_db
+from app.models.schemas import (
+    SlideResponse,
+    UploadResponse,
+    VideoDetailResponse,
+)
+from app.models.video import Video, VideoStatus
+from app.tasks.pipeline import run_pipeline
 
 router = APIRouter(prefix="/api/v1", tags=["pipeline"])
 
-ALLOWED_CONTENT_TYPES = {
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-}
 
+# --------------------------------------------------------------------------
+# POST /upload — PPT 업로드 → 파이프라인 시작
+# --------------------------------------------------------------------------
 
 @router.post("/upload", response_model=UploadResponse)
-async def upload_pptx(file: UploadFile):
-    """PPTX 파일을 업로드하고 파싱+스크립트 생성 파이프라인을 시작한다."""
+async def upload_pptx(file: UploadFile, db: Session = Depends(get_db)):
+    """PPTX 파일을 업로드하고 5단계 파이프라인을 시작한다."""
 
     # 확장자 검증
     if not file.filename or not file.filename.lower().endswith(".pptx"):
@@ -47,44 +52,85 @@ async def upload_pptx(file: UploadFile):
     output_dir = job_dir / "output"
     output_dir.mkdir(exist_ok=True)
 
-    # Celery 태스크 실행
-    task = process_pptx.apply_async(
-        args=[str(file_path), str(output_dir)],
+    # Video 레코드 생성
+    video = Video(
         task_id=job_id,
+        filename=file.filename,
+        file_path=str(file_path),
+        status=VideoStatus.UPLOADING,
     )
+    db.add(video)
+    db.commit()
 
-    return UploadResponse(task_id=task.id)
+    # Celery 5단계 체인 실행
+    run_pipeline(job_id, str(file_path), str(output_dir))
+
+    return UploadResponse(task_id=job_id)
 
 
-@router.get("/tasks/{task_id}", response_model=TaskStatusResponse)
-async def get_task_status(task_id: str):
-    """Celery 태스크 상태를 조회한다."""
-    from app.celery_app import celery
+# --------------------------------------------------------------------------
+# GET /videos/{task_id} — 파이프라인 결과 상세 조회
+# --------------------------------------------------------------------------
 
-    result = celery.AsyncResult(task_id)
+@router.get("/videos/{task_id}", response_model=VideoDetailResponse)
+async def get_video_detail(task_id: str, db: Session = Depends(get_db)):
+    """Video + Slide + Script 전체 정보를 반환한다."""
+    video = db.query(Video).filter(Video.task_id == task_id).first()
+    if not video:
+        raise HTTPException(status_code=404, detail="해당 task_id를 찾을 수 없습니다.")
 
-    if result.state == "PENDING":
-        return TaskStatusResponse(task_id=task_id, status=TaskStatus.PENDING)
-
-    if result.state == "PROCESSING":
-        meta = result.info or {}
-        return TaskStatusResponse(
-            task_id=task_id,
-            status=TaskStatus.PROCESSING,
-            progress=meta.get("progress"),
+    slides_resp: list[SlideResponse] = []
+    for slide in sorted(video.slides, key=lambda s: s.slide_number):
+        slides_resp.append(
+            SlideResponse(
+                slide_number=slide.slide_number,
+                text_content=slide.text_content,
+                speaker_notes=slide.speaker_notes,
+                script=slide.script.content if slide.script else None,
+                is_approved=bool(slide.script and slide.script.is_approved),
+            )
         )
 
-    if result.state == "SUCCESS":
-        return TaskStatusResponse(
-            task_id=task_id,
-            status=TaskStatus.COMPLETED,
-            result=result.result,
-        )
-
-    # FAILURE
-    error_msg = str(result.info) if result.info else "알 수 없는 오류"
-    return TaskStatusResponse(
-        task_id=task_id,
-        status=TaskStatus.FAILED,
-        progress=error_msg,
+    return VideoDetailResponse(
+        task_id=video.task_id,
+        filename=video.filename,
+        status=video.status,
+        total_slides=video.total_slides,
+        slides=slides_resp,
+        error_message=video.error_message,
     )
+
+
+# --------------------------------------------------------------------------
+# PATCH /videos/{task_id}/slides/{slide_number}/approve — 스크립트 승인
+# --------------------------------------------------------------------------
+
+@router.patch("/videos/{task_id}/slides/{slide_number}/approve")
+async def approve_script(task_id: str, slide_number: int, db: Session = Depends(get_db)):
+    """특정 슬라이드의 스크립트를 승인한다."""
+    video = db.query(Video).filter(Video.task_id == task_id).first()
+    if not video:
+        raise HTTPException(status_code=404, detail="해당 task_id를 찾을 수 없습니다.")
+
+    from app.models.video import Slide, Script
+
+    slide = (
+        db.query(Slide)
+        .filter(Slide.video_id == video.id, Slide.slide_number == slide_number)
+        .first()
+    )
+    if not slide or not slide.script:
+        raise HTTPException(status_code=404, detail="해당 슬라이드 또는 스크립트를 찾을 수 없습니다.")
+
+    slide.script.is_approved = 1
+    db.commit()
+
+    # 모든 스크립트 승인 시 Video 상태 업데이트
+    all_approved = all(
+        s.script and s.script.is_approved for s in video.slides if s.script
+    )
+    if all_approved and video.slides:
+        video.status = VideoStatus.APPROVED
+        db.commit()
+
+    return {"message": f"슬라이드 {slide_number} 스크립트가 승인되었습니다.", "all_approved": all_approved}

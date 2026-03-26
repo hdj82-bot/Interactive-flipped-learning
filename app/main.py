@@ -6,20 +6,22 @@ from fastapi import FastAPI
 
 from app.api.routes import router
 from app.database import Base, engine
+
+# 모든 모델 import → create_all 시 테이블 생성 보장
 from app.models.embedding import SlideEmbedding  # noqa: F401
+from app.models.video import Script, Slide, Video  # noqa: F401
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 시작 시 테이블 생성 (pgvector extension은 Alembic 마이그레이션으로 관리)
     Base.metadata.create_all(bind=engine)
     yield
 
 
 app = FastAPI(
     title="IFL Pipeline",
-    description="PPT 업로드 → 파싱 → 임베딩 → 발화 스크립트 생성 파이프라인",
-    version="0.2.0",
+    description="PPT 업로드 → 파싱 → 임베딩 → 스크립트 생성 → 검토 파이프라인",
+    version="0.3.0",
     lifespan=lifespan,
 )
 
