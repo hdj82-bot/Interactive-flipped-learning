@@ -63,3 +63,6 @@ class Script(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     slide = relationship("Slide", back_populates="script")
+    translations = relationship(
+        "ScriptTranslation", backref="script", cascade="all, delete-orphan"
+    )

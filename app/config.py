@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = 1536
 
+    # DeepL
+    deepl_api_key: str = ""
+
     # File storage
     upload_dir: Path = Path("uploads")
     max_file_size_mb: int = 50
