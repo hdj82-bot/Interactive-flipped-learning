@@ -6,4 +6,4 @@ class Base(DeclarativeBase):
 
 
 # 모든 모델을 여기서 임포트하여 Alembic이 감지할 수 있게 함
-from app.models import user, lecture, session  # noqa: F401, E402
+from app.models import user, course, lecture, session  # noqa: F401, E402

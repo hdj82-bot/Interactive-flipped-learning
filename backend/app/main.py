@@ -2,6 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.auth import router as auth_router
+from app.api.v1.courses import router as courses_router
+from app.api.v1.lectures import router as lectures_router
 
 app = FastAPI(
     title="IFL Platform API",
@@ -18,6 +20,8 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(courses_router)
+app.include_router(lectures_router)
 
 
 @app.get("/health")
