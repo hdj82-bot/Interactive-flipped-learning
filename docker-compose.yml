@@ -1,4 +1,15 @@
 services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ifl
+      POSTGRES_PASSWORD: ifl
+      POSTGRES_DB: ifl_pipeline
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
   redis:
     image: redis:7-alpine
     ports:
@@ -13,6 +24,7 @@ services:
       - ./uploads:/app/uploads
     depends_on:
       - redis
+      - postgres
 
   worker:
     build: .
@@ -22,3 +34,7 @@ services:
       - ./uploads:/app/uploads
     depends_on:
       - redis
+      - postgres
+
+volumes:
+  pgdata:

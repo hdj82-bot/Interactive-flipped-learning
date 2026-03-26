@@ -10,6 +10,7 @@ from celery import Task
 
 from app.celery_app import celery
 from app.models.schemas import PipelineResult, TaskStatus
+from app.services.embedding import store_slide_embeddings
 from app.services.parser import parse_pptx
 from app.services.script_generator import generate_scripts
 
@@ -49,6 +50,14 @@ def process_pptx(self, file_path: str, output_dir: str) -> dict:
             meta={"progress": "스크립트 생성 중...", "total_slides": len(slides)},
         )
         scripts = generate_scripts(slides)
+
+        # Step 3: 임베딩 생성 및 저장
+        self.update_state(
+            state="PROCESSING",
+            meta={"progress": "슬라이드 임베딩 생성 중...", "total_slides": len(slides)},
+        )
+        embed_count = store_slide_embeddings(task_id, slides)
+        logger.info("태스크 %s: %d개 슬라이드 임베딩 저장 완료", task_id, embed_count)
 
         # 결과 조립
         result = PipelineResult(

@@ -12,6 +12,14 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/0"
 
+    # PostgreSQL
+    database_url: str = "postgresql://ifl:ifl@localhost:5432/ifl_pipeline"
+
+    # OpenAI (임베딩)
+    openai_api_key: str = ""
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimensions: int = 1536
+
     # File storage
     upload_dir: Path = Path("uploads")
     max_file_size_mb: int = 50
