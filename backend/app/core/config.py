@@ -19,6 +19,14 @@ class Settings(BaseSettings):
     GOOGLE_OAUTH_CLIENT_SECRET: str = ""
     GOOGLE_OAUTH_REDIRECT_URI: str = "http://localhost:8000/api/auth/google/callback"
 
+    # Anthropic
+    ANTHROPIC_API_KEY: str = ""
+
+    # 평가 시스템
+    FORMATIVE_SERVE_COUNT: int = 5    # 회당 제공 형성평가 문항 수
+    SUMMATIVE_SERVE_COUNT: int = 5    # 회당 제공 총괄평가 문항 수
+    TIMESTAMP_TOLERANCE_SECONDS: int = 120  # 타임스탬프 허용 오차(초)
+
     # Frontend
     FRONTEND_URL: str = "http://localhost:3000"
 
