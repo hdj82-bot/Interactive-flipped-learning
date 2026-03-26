@@ -13,11 +13,14 @@ venv/
 dist/
 .mypy_cache/
 
-# Node.js
+# Node.js / TypeScript
 node_modules/
 .next/
 out/
 .vercel/
+*.js.map
+*.d.ts
+!nest-cli.json
 
 # Docker
 *.log
