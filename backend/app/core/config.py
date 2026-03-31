@@ -77,6 +77,12 @@ class Settings(BaseSettings):
     # ── 번역 ────────────────────────────────────────────────────
     DEEPL_API_KEY: str = ""
 
+    # ── Stripe 결제 ──────────────────────────────────────────────
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
+    STRIPE_PRICE_BASIC: str = ""   # Stripe Price ID for BASIC plan
+    STRIPE_PRICE_PRO: str = ""     # Stripe Price ID for PRO plan
+
     # ── Frontend ────────────────────────────────────────────────
     FRONTEND_URL: str = "http://localhost:3000"
 

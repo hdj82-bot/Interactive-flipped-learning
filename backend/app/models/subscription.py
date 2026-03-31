@@ -3,7 +3,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, func
+from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -21,6 +21,11 @@ PLAN_LIMITS: dict[str, int] = {
     "PRO": 20,
 }
 
+PLAN_PRICES: dict[str, int] = {
+    "BASIC": 9900,   # KRW
+    "PRO": 29900,
+}
+
 
 class Subscription(Base):
     """사용자 구독 플랜 관리."""
@@ -33,6 +38,11 @@ class Subscription(Base):
     plan: Mapped[PlanType] = mapped_column(
         SAEnum(PlanType), nullable=False, default=PlanType.free
     )
+
+    # Stripe 연동
+    stripe_customer_id: Mapped[str | None] = mapped_column(String(255), unique=True, index=True)
+    stripe_subscription_id: Mapped[str | None] = mapped_column(String(255), unique=True, index=True)
+
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
