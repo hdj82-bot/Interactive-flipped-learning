@@ -85,28 +85,30 @@ async def get_lecture_render_status(
     }
 
 
-@router.post("/upload", summary="PPT 업로드 → 5단계 파이프라인 시작")
+@router.post("/upload", summary="PPT 업로드 → S3 저장 → 5단계 파이프라인 시작")
 async def upload_ppt(
     lecture_id: uuid.UUID,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_professor),
 ):
-    import os
+    from app.services.pipeline import s3 as s3_svc
     from app.tasks.pipeline import start_pipeline
 
     if not file.filename or not file.filename.endswith(".pptx"):
         raise HTTPException(status_code=400, detail=".pptx 파일만 업로드 가능합니다.")
 
-    task_id = str(uuid.uuid4())
-    upload_dir = os.environ.get("UPLOAD_DIR", "/app/uploads")
-    os.makedirs(os.path.join(upload_dir, task_id), exist_ok=True)
-    file_path = os.path.join(upload_dir, task_id, file.filename)
-
     content = await file.read()
-    with open(file_path, "wb") as f:
-        f.write(content)
+    task_id = str(uuid.uuid4())
 
-    result = start_pipeline(task_id, file_path, str(user.id), str(lecture_id))
+    # S3에 PPT 업로드
+    s3_url, s3_key = s3_svc.upload_ppt(content, str(lecture_id), file.filename)
 
-    return {"task_id": task_id, "celery_task_id": result.id, "message": "파이프라인이 시작되었습니다."}
+    result = start_pipeline(task_id, s3_key, str(user.id), str(lecture_id))
+
+    return {
+        "task_id": task_id,
+        "celery_task_id": result.id,
+        "s3_url": s3_url,
+        "message": "S3 업로드 완료, 파이프라인이 시작되었습니다.",
+    }

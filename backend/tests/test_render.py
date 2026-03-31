@@ -105,3 +105,45 @@ async def test_upload_ppt_no_file(client, professor, lecture):
         headers=make_auth_header(professor),
     )
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_upload_ppt_invalid_extension(client, professor, lecture):
+    resp = await client.post(
+        "/api/v1/render/upload",
+        params={"lecture_id": str(lecture.id)},
+        files={"file": ("test.pdf", b"fake-content", "application/pdf")},
+        headers=make_auth_header(professor),
+    )
+    assert resp.status_code == 400
+    assert ".pptx" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_upload_ppt_success_s3(client, professor, lecture):
+    with patch("app.services.pipeline.s3.upload_ppt", return_value=("https://s3.amazonaws.com/ppt/test.pptx", "ppt/test.pptx")), \
+         patch("app.tasks.pipeline.start_pipeline") as mock_pipeline:
+        mock_pipeline.return_value = MagicMock(id="celery-task-123")
+        resp = await client.post(
+            "/api/v1/render/upload",
+            params={"lecture_id": str(lecture.id)},
+            files={"file": ("lecture.pptx", b"fake-pptx-content", "application/vnd.openxmlformats-officedocument.presentationml.presentation")},
+            headers=make_auth_header(professor),
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "task_id" in data
+    assert data["s3_url"] == "https://s3.amazonaws.com/ppt/test.pptx"
+    assert data["celery_task_id"] == "celery-task-123"
+    mock_pipeline.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_upload_ppt_student_forbidden(client, student, lecture):
+    resp = await client.post(
+        "/api/v1/render/upload",
+        params={"lecture_id": str(lecture.id)},
+        files={"file": ("lecture.pptx", b"fake-content", "application/octet-stream")},
+        headers=make_auth_header(student),
+    )
+    assert resp.status_code == 403

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
 import uuid
 
 from celery import chain
@@ -25,12 +26,21 @@ class PipelineTask(celery.Task):
 
 
 @celery.task(base=PipelineTask, bind=True)
-def step1_parse(self, task_id: str, file_path: str) -> dict:
-    """Step 1: PPTX 파싱 — 슬라이드 텍스트, 이미지, 노트 추출."""
+def step1_parse(self, task_id: str, s3_key: str) -> dict:
+    """Step 1: S3에서 PPT 다운로드 → PPTX 파싱 — 슬라이드 텍스트, 이미지, 노트 추출."""
     from app.services.pipeline.parser import parse_pptx
+    from app.services.pipeline import s3 as s3_svc
 
-    output_dir = os.path.join(UPLOAD_DIR, task_id, "images")
-    slides = parse_pptx(file_path, output_dir)
+    # S3에서 PPT 다운로드 → 임시 파일에 저장
+    ppt_bytes = s3_svc.download_file(s3_key)
+    tmp_dir = os.path.join(UPLOAD_DIR, task_id)
+    os.makedirs(tmp_dir, exist_ok=True)
+    local_path = os.path.join(tmp_dir, os.path.basename(s3_key))
+    with open(local_path, "wb") as f:
+        f.write(ppt_bytes)
+
+    output_dir = os.path.join(tmp_dir, "images")
+    slides = parse_pptx(local_path, output_dir)
 
     slides_data = [
         {
@@ -42,8 +52,8 @@ def step1_parse(self, task_id: str, file_path: str) -> dict:
         for s in slides
     ]
 
-    logger.info("Step1 완료: task_id=%s, %d 슬라이드", task_id, len(slides))
-    return {"task_id": task_id, "slides": slides_data}
+    logger.info("Step1 완료: task_id=%s, %d 슬라이드 (S3: %s)", task_id, len(slides), s3_key)
+    return {"task_id": task_id, "slides": slides_data, "s3_key": s3_key}
 
 
 @celery.task(base=PipelineTask, bind=True)
@@ -113,10 +123,10 @@ def step5_notify(self, prev_result: dict) -> dict:
     return prev_result
 
 
-def start_pipeline(task_id: str, file_path: str, instructor_id: str | None = None, lecture_id: str | None = None):
-    """5단계 Celery 체인 파이프라인을 시작."""
+def start_pipeline(task_id: str, s3_key: str, instructor_id: str | None = None, lecture_id: str | None = None):
+    """5단계 Celery 체인 파이프라인을 시작. s3_key: S3에 업로드된 PPT 파일 키."""
     pipeline = chain(
-        step1_parse.s(task_id, file_path),
+        step1_parse.s(task_id, s3_key),
         step2_embed.s(),
         step3_generate_scripts.s(),
         step4_mark_pending_review.s(),
