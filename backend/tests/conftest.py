@@ -10,6 +10,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import JSON
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -26,6 +29,16 @@ from app.models.video import Video, VideoScript, VideoStatus
 
 pytest_plugins = ("pytest_asyncio",)
 
+# ── SQLite JSONB→JSON 폴백 ──────────────────────────────────────────────────
+# PostgreSQL JSONB 타입을 SQLite에서 사용할 수 있도록 모든 JSONB 컬럼을 JSON으로 교체
+
+def _patch_jsonb_columns():
+    """Base.metadata 내 모든 JSONB 컬럼을 JSON으로 교체."""
+    for table in Base.metadata.tables.values():
+        for column in table.columns:
+            if isinstance(column.type, JSONB):
+                column.type = JSON()
+
 # ── SQLite 인메모리 엔진 ──────────────────────────────────────────────────────
 
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
@@ -33,6 +46,7 @@ TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
 @pytest_asyncio.fixture(scope="session")
 async def engine():
+    _patch_jsonb_columns()
     _engine = create_async_engine(TEST_DB_URL, echo=False)
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -44,12 +58,26 @@ async def engine():
 
 @pytest_asyncio.fixture
 async def db(engine) -> AsyncGenerator[AsyncSession, None]:
-    """각 테스트마다 독립적인 트랜잭션 세션 (롤백 격리)."""
-    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    async with async_session() as session:
-        async with session.begin():
-            yield session
-            await session.rollback()
+    """각 테스트마다 독립적인 SAVEPOINT 기반 롤백 격리.
+
+    외부 트랜잭션을 시작하고, 세션의 commit()이 호출되면
+    SAVEPOINT로 대체하여 테스트 종료 후 전체 롤백합니다.
+    """
+    async with engine.connect() as conn:
+        trans = await conn.begin()
+        session = AsyncSession(bind=conn, expire_on_commit=False)
+
+        # session.commit() 호출 시 SAVEPOINT로 대체
+        @event.listens_for(session.sync_session, "after_transaction_end")
+        def restart_savepoint(session_sync, transaction):
+            if transaction.nested and not transaction._parent.nested:
+                session_sync.begin_nested()
+
+        await conn.begin_nested()
+        yield session
+
+        await session.close()
+        await trans.rollback()
 
 
 # ── Redis Mock ────────────────────────────────────────────────────────────────

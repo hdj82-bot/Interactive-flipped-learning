@@ -27,7 +27,6 @@ async def test_get_subscription_existing(client, professor, db):
         id=uuid.uuid4(),
         user_id=professor.id,
         plan=PlanType.pro,
-        monthly_limit=20,
     )
     db.add(sub)
     await db.flush()
@@ -50,12 +49,10 @@ async def test_get_subscription_unauthorized(client):
 
 @pytest.mark.asyncio
 async def test_change_plan(client, student, db):
-    # 기본 구독 먼저 생성
     sub = Subscription(
         id=uuid.uuid4(),
         user_id=student.id,
         plan=PlanType.free,
-        monthly_limit=2,
     )
     db.add(sub)
     await db.flush()
@@ -77,7 +74,6 @@ async def test_change_plan_to_pro(client, professor, db):
         id=uuid.uuid4(),
         user_id=professor.id,
         plan=PlanType.basic,
-        monthly_limit=10,
     )
     db.add(sub)
     await db.flush()
@@ -100,7 +96,6 @@ async def test_get_usage(client, student, db):
         id=uuid.uuid4(),
         user_id=student.id,
         plan=PlanType.free,
-        monthly_limit=2,
     )
     db.add(sub)
     await db.flush()

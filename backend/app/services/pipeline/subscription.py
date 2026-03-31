@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from sqlalchemy import extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.subscription import PLAN_LIMITS, Subscription
+from app.models.subscription import PLAN_LIMITS, PlanType, Subscription
 from app.models.video_render import VideoRender
 
 
@@ -57,7 +57,7 @@ async def update_plan(db: AsyncSession, user_id: uuid.UUID, new_plan: str) -> Su
     if new_plan not in PLAN_LIMITS:
         raise ValueError(f"유효하지 않은 플랜: {new_plan}")
     sub = await get_or_create_subscription(db, user_id)
-    sub.plan = new_plan
+    sub.plan = PlanType(new_plan)
     sub.started_at = datetime.now(timezone.utc)
     await db.flush()
     return sub

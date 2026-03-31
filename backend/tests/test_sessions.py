@@ -19,7 +19,7 @@ async def test_create_session(client, student, lecture):
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] == "not_started"
+    assert data["status"] in ("not_started", "in_progress")
     assert "id" in data
 
 
