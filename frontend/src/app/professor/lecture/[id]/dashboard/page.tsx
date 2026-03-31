@@ -36,7 +36,7 @@ export default function LectureDashboardPage() {
       <h1 className="text-xl font-bold text-gray-900 mb-6">강의 분석</h1>
 
       {/* 탭 */}
-      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-6 w-fit">
+      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-6 w-full sm:w-fit overflow-x-auto">
         {tabs.map((t) => (
           <button key={t.key} onClick={() => setTab(t.key)}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
@@ -66,12 +66,13 @@ function AttendanceView({ data }: { data: Record<string, unknown> }) {
   const students = (data.students || []) as Record<string, unknown>[];
   return (
     <div>
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         <StatCard label="전체" value={summary.total ?? 0} />
         <StatCard label="실시간" value={summary.live ?? 0} color="text-green-600" />
         <StatCard label="사후 시청" value={summary.vod ?? 0} color="text-blue-600" />
       </div>
-      <table className="w-full text-sm">
+      <div className="overflow-x-auto -mx-2 px-2">
+      <table className="w-full text-sm min-w-[400px]">
         <thead><tr className="border-b text-left text-gray-500"><th className="pb-2">이름</th><th>학번</th><th>유형</th><th>진행률</th></tr></thead>
         <tbody>
           {students.map((s, i) => (
@@ -84,6 +85,7 @@ function AttendanceView({ data }: { data: Record<string, unknown> }) {
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

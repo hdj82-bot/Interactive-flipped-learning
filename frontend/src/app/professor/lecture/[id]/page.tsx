@@ -88,9 +88,9 @@ export default function ScriptEditorPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
         <h1 className="text-xl font-bold text-gray-900">스크립트 에디터</h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button onClick={handleReset} className="text-sm border border-gray-300 rounded-xl px-4 py-2 hover:bg-gray-50 transition">
             AI 원본 복원
           </button>
@@ -132,7 +132,7 @@ export default function ScriptEditorPage() {
               rows={5} className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-indigo-500 resize-none" />
           </div>
 
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">톤</label>
               <select value={current.tone} onChange={(e) => handleSegmentChange(activeSlide, "tone", e.target.value)}

@@ -31,10 +31,10 @@ export default function ProfessorDashboardPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
         <h1 className="text-2xl font-bold text-gray-900">강의 관리</h1>
         <button onClick={() => router.push("/professor/lecture/new")}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl px-5 py-2.5 text-sm font-medium transition">
+          className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl px-5 py-2.5 text-sm font-medium transition w-full sm:w-auto">
           새 강의 만들기
         </button>
       </div>
