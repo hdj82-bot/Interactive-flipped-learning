@@ -21,8 +21,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /install /usr/local
 COPY . .
 
-RUN chown -R appuser /app
+# Celery 워커가 S3에서 다운로드한 PPT를 임시 저장할 디렉토리
+RUN mkdir -p /app/uploads && chown -R appuser /app
 USER appuser
+
+ENV UPLOAD_DIR=/app/uploads
 
 EXPOSE 8000
 

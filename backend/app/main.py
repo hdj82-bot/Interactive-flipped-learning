@@ -86,6 +86,17 @@ async def health_check():
         checks["redis"] = "ok"
     except Exception:
         checks["redis"] = "error"
+    # S3 check
+    try:
+        if settings.AWS_ACCESS_KEY_ID:
+            from app.services.pipeline.s3 import get_s3_client
+            s3 = get_s3_client()
+            s3.head_bucket(Bucket=settings.S3_BUCKET)
+            checks["s3"] = "ok"
+        else:
+            checks["s3"] = "not_configured"
+    except Exception:
+        checks["s3"] = "error"
 
-    status = "ok" if all(v == "ok" for v in checks.values()) else "degraded"
+    status = "ok" if all(v in ("ok", "not_configured") for v in checks.values()) else "degraded"
     return {"status": status, "checks": checks, "env": settings.ENVIRONMENT}
