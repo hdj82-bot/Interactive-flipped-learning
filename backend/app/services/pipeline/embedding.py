@@ -13,11 +13,28 @@ from app.services.pipeline.schemas import SlideContent
 logger = logging.getLogger(__name__)
 
 
+MAX_BATCH_SIZE = 100  # OpenAI 임베딩 배치 제한
+
+
 def get_embeddings(texts: list[str]) -> list[list[float]]:
     """OpenAI text-embedding-3-small로 텍스트 목록을 벡터화."""
+    if not texts:
+        return []
+
     client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
-    response = client.embeddings.create(model=settings.EMBEDDING_MODEL, input=texts)
-    return [item.embedding for item in response.data]
+
+    # 빈 텍스트 필터링 + 배치 분할
+    all_embeddings: list[list[float]] = []
+    for i in range(0, len(texts), MAX_BATCH_SIZE):
+        batch = texts[i:i + MAX_BATCH_SIZE]
+        try:
+            response = client.embeddings.create(model=settings.EMBEDDING_MODEL, input=batch)
+            all_embeddings.extend(item.embedding for item in response.data)
+        except openai.APIError as exc:
+            logger.error("OpenAI 임베딩 API 실패 (batch %d-%d): %s", i, i + len(batch), exc)
+            raise RuntimeError(f"임베딩 생성 실패: {exc}") from exc
+
+    return all_embeddings
 
 
 def store_slide_embeddings(db: Session, task_id: str, slides: list[SlideContent]) -> int:

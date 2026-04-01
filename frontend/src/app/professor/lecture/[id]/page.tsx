@@ -3,6 +3,8 @@
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useToast } from "@/components/ui/Toast";
+import Modal from "@/components/ui/Modal";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 
 interface Segment {
@@ -25,27 +27,33 @@ interface ScriptData {
 export default function ScriptEditorPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const { toast } = useToast();
 
   const [script, setScript] = useState<ScriptData | null>(null);
   const [segments, setSegments] = useState<Segment[]>([]);
   const [activeSlide, setActiveSlide] = useState(0);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [showApproveModal, setShowApproveModal] = useState(false);
+  const [approving, setApproving] = useState(false);
+  const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
     (async () => {
       try {
-        // 영상 ID로 스크립트 조회 — 실제로는 lecture -> video -> script 체인
         const { data } = await api.get(`/api/videos/${id}/script`);
         setScript(data);
         setSegments(data.segments || []);
-      } catch { /* 스크립트 미생성 상태 */ }
+      } catch {
+        // 스크립트 미생성 상태
+      }
       setLoading(false);
     })();
   }, [id]);
 
   const handleSegmentChange = (idx: number, field: keyof Segment, value: string | number | null) => {
     setSegments((prev) => prev.map((s, i) => i === idx ? { ...s, [field]: value } : s));
+    setDirty(true);
   };
 
   const handleSave = async () => {
@@ -53,16 +61,30 @@ export default function ScriptEditorPage() {
     setSaving(true);
     try {
       await api.patch(`/api/videos/${script.video_id}/script`, { segments });
-    } catch { /* ignore */ }
+      setDirty(false);
+      toast("스크립트가 저장되었습니다.", "success");
+    } catch {
+      toast("저장에 실패했습니다. 다시 시도해주세요.", "error");
+    }
     setSaving(false);
   };
 
   const handleApprove = async () => {
     if (!script) return;
+    setApproving(true);
     try {
+      if (dirty) {
+        await api.patch(`/api/videos/${script.video_id}/script`, { segments });
+        setDirty(false);
+      }
       await api.post(`/api/videos/${script.video_id}/approve`);
+      toast("스크립트가 승인되었습니다. 렌더링이 시작됩니다.", "success");
       router.push("/professor/dashboard");
-    } catch { /* ignore */ }
+    } catch {
+      toast("승인에 실패했습니다. 다시 시도해주세요.", "error");
+    }
+    setApproving(false);
+    setShowApproveModal(false);
   };
 
   const handleReset = async () => {
@@ -70,7 +92,11 @@ export default function ScriptEditorPage() {
     try {
       const { data } = await api.post(`/api/videos/${script.video_id}/script/reset`);
       setSegments(data.segments || []);
-    } catch { /* ignore */ }
+      setDirty(true);
+      toast("AI 원본으로 복원되었습니다.", "info");
+    } catch {
+      toast("복원에 실패했습니다.", "error");
+    }
   };
 
   if (loading) return <LoadingSpinner fullScreen label="스크립트 불러오는 중..." />;
@@ -78,7 +104,12 @@ export default function ScriptEditorPage() {
   if (!script || segments.length === 0) {
     return (
       <div className="text-center py-20">
-        <p className="text-gray-400 mb-4">아직 스크립트가 생성되지 않았습니다</p>
+        <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gray-100 flex items-center justify-center">
+          <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+          </svg>
+        </div>
+        <p className="text-gray-700 font-medium mb-1">아직 스크립트가 생성되지 않았습니다</p>
         <p className="text-sm text-gray-400">PPT를 업로드하면 AI가 자동으로 스크립트를 생성합니다</p>
       </div>
     );
@@ -89,7 +120,12 @@ export default function ScriptEditorPage() {
   return (
     <div>
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
-        <h1 className="text-xl font-bold text-gray-900">스크립트 에디터</h1>
+        <div>
+          <h1 className="text-xl font-bold text-gray-900">스크립트 에디터</h1>
+          <p className="text-xs text-gray-400 mt-0.5">
+            {segments.length}개 슬라이드 {dirty && <span className="text-amber-500 font-medium">- 저장되지 않은 변경사항</span>}
+          </p>
+        </div>
         <div className="flex flex-wrap gap-2">
           <button onClick={handleReset} className="text-sm border border-gray-300 rounded-xl px-4 py-2 hover:bg-gray-50 transition">
             AI 원본 복원
@@ -98,7 +134,7 @@ export default function ScriptEditorPage() {
             className="text-sm bg-gray-900 text-white rounded-xl px-4 py-2 hover:bg-gray-800 disabled:opacity-50 transition">
             {saving ? "저장 중..." : "저장"}
           </button>
-          <button onClick={handleApprove}
+          <button onClick={() => setShowApproveModal(true)}
             className="text-sm bg-indigo-600 text-white rounded-xl px-4 py-2 hover:bg-indigo-700 transition">
             승인 (렌더링 시작)
           </button>
@@ -123,13 +159,26 @@ export default function ScriptEditorPage() {
         <div className="bg-white border border-gray-200 rounded-2xl p-6 space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="font-semibold text-gray-900">슬라이드 {current.slide_index + 1}</h3>
-            <span className="text-xs text-gray-400">{current.start_seconds}s ~ {current.end_seconds}s</span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-gray-400">{current.start_seconds}s ~ {current.end_seconds}s</span>
+              <div className="flex gap-1">
+                <button onClick={() => setActiveSlide(Math.max(0, activeSlide - 1))} disabled={activeSlide === 0}
+                  className="w-7 h-7 rounded-lg border border-gray-200 flex items-center justify-center text-gray-400 hover:text-gray-600 disabled:opacity-30 transition">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                </button>
+                <button onClick={() => setActiveSlide(Math.min(segments.length - 1, activeSlide + 1))} disabled={activeSlide === segments.length - 1}
+                  className="w-7 h-7 rounded-lg border border-gray-200 flex items-center justify-center text-gray-400 hover:text-gray-600 disabled:opacity-30 transition">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                </button>
+              </div>
+            </div>
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">발화 텍스트</label>
             <textarea value={current.text} onChange={(e) => handleSegmentChange(activeSlide, "text", e.target.value)}
-              rows={5} className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-indigo-500 resize-none" />
+              rows={5} className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 resize-none" />
+            <p className="text-xs text-gray-400 mt-1 text-right">{current.text.length}자</p>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -166,6 +215,31 @@ export default function ScriptEditorPage() {
           </div>
         </div>
       )}
+
+      {/* 승인 확인 모달 */}
+      <Modal open={showApproveModal} onClose={() => setShowApproveModal(false)} title="스크립트 승인">
+        <div className="space-y-4 pt-2">
+          <p className="text-sm text-gray-600">
+            스크립트를 승인하면 AI 아바타 영상 렌더링이 시작됩니다.
+            렌더링이 시작되면 스크립트를 수정할 수 없습니다.
+          </p>
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+            <p className="text-sm text-amber-700">
+              구독 플랜의 월간 렌더링 횟수가 1회 차감됩니다.
+            </p>
+          </div>
+          <div className="flex gap-3 justify-end pt-2">
+            <button onClick={() => setShowApproveModal(false)}
+              className="text-sm border border-gray-300 rounded-xl px-4 py-2 hover:bg-gray-50 transition">
+              취소
+            </button>
+            <button onClick={handleApprove} disabled={approving}
+              className="text-sm bg-indigo-600 text-white rounded-xl px-4 py-2 hover:bg-indigo-700 disabled:opacity-50 transition">
+              {approving ? "승인 중..." : "승인하기"}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

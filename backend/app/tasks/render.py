@@ -26,7 +26,8 @@ def render_slide(self, render_id: str, script_text: str) -> dict:
         db.commit()
 
         # TTS 합성
-        tts_result = asyncio.get_event_loop().run_until_complete(synthesize(script_text))
+        loop = asyncio.new_event_loop()
+        tts_result = loop.run_until_complete(synthesize(script_text))
 
         cost_log.record(
             db, render.id, service=tts_result.provider, operation="tts_synthesize",
@@ -43,9 +44,10 @@ def render_slide(self, render_id: str, script_text: str) -> dict:
         render.status = "RENDERING"
         db.commit()
 
-        heygen_job_id = asyncio.get_event_loop().run_until_complete(
+        heygen_job_id = loop.run_until_complete(
             create_video(audio_url=audio_url, avatar_id=render.avatar_id, callback_id=str(render.id))
         )
+        loop.close()
         render.heygen_job_id = heygen_job_id
         db.commit()
 

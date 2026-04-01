@@ -1,4 +1,5 @@
 """응답 제출 및 채점 서비스."""
+import logging
 import uuid
 
 from sqlalchemy import select
@@ -15,6 +16,8 @@ from app.schemas.response import (
     SingleResponse,
 )
 
+logger = logging.getLogger(__name__)
+
 
 # ── 타임스탬프 검증 ───────────────────────────────────────────────────────────
 
@@ -26,6 +29,9 @@ def _check_timestamp(
     if question.timestamp_seconds is None:
         # 총괄평가는 타임스탬프 검사 불필요
         return True
+    # 음수 타임스탬프는 항상 무효
+    if video_timestamp_seconds < 0:
+        return False
     diff = abs(video_timestamp_seconds - question.timestamp_seconds)
     return diff <= settings.TIMESTAMP_TOLERANCE_SECONDS
 
@@ -36,8 +42,12 @@ def _grade(question: Question, user_answer: str) -> bool | None:
     """객관식: 정답 비교. 주관식: None(수동 채점)."""
     if question.question_type == QuestionType.short_answer:
         return None  # 주관식은 자동 채점 불가
-    # 객관식: 공백 제거 후 비교
-    return user_answer.strip() == (question.correct_answer or "").strip()
+    # 객관식: 인덱스 비교 (0~3 범위 검증)
+    answer = user_answer.strip()
+    correct = (question.correct_answer or "").strip()
+    if answer not in ("0", "1", "2", "3"):
+        return False  # 유효하지 않은 객관식 답변
+    return answer == correct
 
 
 # ── 응답 제출 ─────────────────────────────────────────────────────────────────
@@ -69,14 +79,20 @@ async def submit_responses(
         q.id: q for q in q_result.scalars().all()
     }
 
+    skipped_ids: list[str] = []
     saved: list[Response] = []
     for item in responses:
         question = questions_map.get(item.question_id)
         if question is None:
+            skipped_ids.append(str(item.question_id))
             continue
 
         timestamp_valid = _check_timestamp(question, item.video_timestamp_seconds)
-        is_correct = _grade(question, item.user_answer) if timestamp_valid else False
+        if timestamp_valid:
+            is_correct = _grade(question, item.user_answer)
+        else:
+            # 타임스탬프 무효: 주관식은 None 유지, 객관식은 False
+            is_correct = None if question.question_type == QuestionType.short_answer else False
 
         resp = Response(
             session_id=session_id,
@@ -88,6 +104,9 @@ async def submit_responses(
         )
         db.add(resp)
         saved.append(resp)
+
+    if skipped_ids:
+        logger.warning("존재하지 않는 question_id 건너뜀: %s", skipped_ids)
 
     await db.commit()
     for r in saved:

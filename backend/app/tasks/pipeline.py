@@ -25,22 +25,34 @@ class PipelineTask(celery.Task):
         logger.error("파이프라인 태스크 실패: task_id=%s, error=%s", task_id, exc)
 
 
-@celery.task(base=PipelineTask, bind=True)
+@celery.task(base=PipelineTask, bind=True, max_retries=2, default_retry_delay=30)
 def step1_parse(self, task_id: str, s3_key: str) -> dict:
     """Step 1: S3에서 PPT 다운로드 → PPTX 파싱 — 슬라이드 텍스트, 이미지, 노트 추출."""
     from app.services.pipeline.parser import parse_pptx
     from app.services.pipeline import s3 as s3_svc
 
     # S3에서 PPT 다운로드 → 임시 파일에 저장
-    ppt_bytes = s3_svc.download_file(s3_key)
+    try:
+        ppt_bytes = s3_svc.download_file(s3_key)
+    except Exception as exc:
+        logger.error("Step1 S3 다운로드 실패: task_id=%s, s3_key=%s, error=%s", task_id, s3_key, exc)
+        raise self.retry(exc=exc)
+
     tmp_dir = os.path.join(UPLOAD_DIR, task_id)
     os.makedirs(tmp_dir, exist_ok=True)
     local_path = os.path.join(tmp_dir, os.path.basename(s3_key))
     with open(local_path, "wb") as f:
         f.write(ppt_bytes)
 
-    output_dir = os.path.join(tmp_dir, "images")
-    slides = parse_pptx(local_path, output_dir)
+    try:
+        output_dir = os.path.join(tmp_dir, "images")
+        slides = parse_pptx(local_path, output_dir)
+    except Exception as exc:
+        logger.error("Step1 PPTX 파싱 실패: task_id=%s, error=%s", task_id, exc)
+        raise RuntimeError(f"PPT 파싱 실패: {exc}") from exc
+
+    if not slides:
+        raise RuntimeError(f"PPT에 슬라이드가 없습니다: task_id={task_id}")
 
     slides_data = [
         {
@@ -56,7 +68,7 @@ def step1_parse(self, task_id: str, s3_key: str) -> dict:
     return {"task_id": task_id, "slides": slides_data, "s3_key": s3_key}
 
 
-@celery.task(base=PipelineTask, bind=True)
+@celery.task(base=PipelineTask, bind=True, max_retries=2, default_retry_delay=30)
 def step2_embed(self, prev_result: dict) -> dict:
     """Step 2: OpenAI 임베딩 생성 → pgvector 저장."""
     from app.services.pipeline.embedding import store_slide_embeddings
@@ -70,6 +82,10 @@ def step2_embed(self, prev_result: dict) -> dict:
         count = store_slide_embeddings(db, task_id, slides)
         db.commit()
         logger.info("Step2 완료: task_id=%s, %d 임베딩 저장", task_id, count)
+    except Exception as exc:
+        db.rollback()
+        logger.error("Step2 임베딩 실패: task_id=%s, error=%s", task_id, exc)
+        raise self.retry(exc=exc)
     finally:
         db.close()
 
@@ -111,13 +127,19 @@ def step5_notify(self, prev_result: dict) -> dict:
     lecture_id = prev_result.get("lecture_id")
 
     if instructor_id and lecture_id:
-        asyncio.get_event_loop().run_until_complete(
-            notify_instructor(
-                instructor_id=uuid.UUID(instructor_id),
-                lecture_id=uuid.UUID(lecture_id),
-                status="PENDING_REVIEW",
+        try:
+            loop = asyncio.new_event_loop()
+            loop.run_until_complete(
+                notify_instructor(
+                    instructor_id=uuid.UUID(instructor_id),
+                    lecture_id=uuid.UUID(lecture_id),
+                    status="PENDING_REVIEW",
+                )
             )
-        )
+            loop.close()
+        except Exception as exc:
+            # 알림 실패는 파이프라인을 중단시키지 않음
+            logger.warning("Step5 알림 전송 실패 (무시): task_id=%s, error=%s", task_id, exc)
 
     logger.info("Step5 완료: task_id=%s, 알림 전송", task_id)
     return prev_result

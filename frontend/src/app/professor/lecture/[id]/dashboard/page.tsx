@@ -3,23 +3,31 @@
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useToast } from "@/components/ui/Toast";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 
 type Tab = "attendance" | "scores" | "engagement" | "cost";
 
 export default function LectureDashboardPage() {
   const { id } = useParams<{ id: string }>();
+  const { toast } = useToast();
   const [tab, setTab] = useState<Tab>("attendance");
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
     setLoading(true);
+    setError(false);
     (async () => {
       try {
         const { data: result } = await api.get(`/api/v1/dashboard/${id}/${tab}`);
         setData(result);
-      } catch { setData(null); }
+      } catch {
+        setData(null);
+        setError(true);
+        toast("분석 데이터를 불러오지 못했습니다.", "error");
+      }
       setLoading(false);
     })();
   }, [id, tab]);
@@ -31,9 +39,42 @@ export default function LectureDashboardPage() {
     { key: "cost", label: "비용" },
   ];
 
+  const [exporting, setExporting] = useState(false);
+
+  const handleExportCSV = async () => {
+    setExporting(true);
+    try {
+      const response = await api.get(`/api/v1/dashboard/${id}/export/csv`, { responseType: "blob" });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", `lecture_${id}_progress.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast("CSV 파일이 다운로드되었습니다.", "success");
+    } catch {
+      toast("CSV 내보내기에 실패했습니다.", "error");
+    }
+    setExporting(false);
+  };
+
   return (
     <div>
-      <h1 className="text-xl font-bold text-gray-900 mb-6">강의 분석</h1>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+        <h1 className="text-xl font-bold text-gray-900">강의 분석</h1>
+        <button
+          onClick={handleExportCSV}
+          disabled={exporting}
+          className="flex items-center gap-2 text-sm bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-50 text-gray-700 rounded-xl px-4 py-2 transition"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+          </svg>
+          {exporting ? "내보내는 중..." : "CSV 내보내기"}
+        </button>
+      </div>
 
       {/* 탭 */}
       <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-6 w-full sm:w-fit overflow-x-auto">
@@ -47,8 +88,14 @@ export default function LectureDashboardPage() {
         ))}
       </div>
 
-      {loading ? <LoadingSpinner label="데이터 불러오는 중..." /> : !data ? (
-        <p className="text-gray-400 text-center py-10">데이터가 없습니다</p>
+      {loading ? <LoadingSpinner label="데이터 불러오는 중..." /> : error ? (
+        <div className="text-center py-10">
+          <p className="text-gray-500 mb-3">데이터를 불러오지 못했습니다.</p>
+          <button onClick={() => { setLoading(true); setError(false); api.get(`/api/v1/dashboard/${id}/${tab}`).then(({ data: result }) => setData(result)).catch(() => setError(true)).finally(() => setLoading(false)); }}
+            className="text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl px-4 py-2 transition">다시 시도</button>
+        </div>
+      ) : !data ? (
+        <p className="text-gray-400 text-center py-10">아직 데이터가 없습니다. 학생이 강의를 시청하면 분석 결과가 표시됩니다.</p>
       ) : (
         <div className="bg-white border border-gray-200 rounded-2xl p-6">
           {tab === "attendance" && <AttendanceView data={data} />}

@@ -45,12 +45,15 @@ def _generate_single_script(client: anthropic.Anthropic, slide: SlideContent) ->
     for img_path in slide.image_paths:
         path = Path(img_path)
         if path.exists():
-            mime_type = mimetypes.guess_type(img_path)[0] or "image/png"
-            data = encode_image_base64(img_path)
-            content_blocks.append({
-                "type": "image",
-                "source": {"type": "base64", "media_type": mime_type, "data": data},
-            })
+            try:
+                mime_type = mimetypes.guess_type(img_path)[0] or "image/png"
+                data = encode_image_base64(img_path)
+                content_blocks.append({
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": mime_type, "data": data},
+                })
+            except Exception:
+                logger.warning("이미지 인코딩 실패, 건너뜀: %s", img_path)
 
     prompt_parts: list[str] = [f"## 슬라이드 {slide.slide_number}"]
     if slide.speaker_notes:
@@ -63,11 +66,26 @@ def _generate_single_script(client: anthropic.Anthropic, slide: SlideContent) ->
 
     content_blocks.append({"type": "text", "text": "\n".join(prompt_parts)})
 
-    response = client.messages.create(
-        model=settings.CLAUDE_MODEL,
-        max_tokens=1024,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": content_blocks}],
-    )
+    try:
+        response = client.messages.create(
+            model=settings.CLAUDE_MODEL,
+            max_tokens=1024,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": content_blocks}],
+        )
+    except anthropic.APIError as exc:
+        logger.error("슬라이드 %d 스크립트 생성 실패: %s", slide.slide_number, exc)
+        raise RuntimeError(
+            f"슬라이드 {slide.slide_number} 스크립트 생성 실패: {exc}"
+        ) from exc
 
-    return response.content[0].text
+    if not response.content:
+        logger.warning("슬라이드 %d: 빈 응답", slide.slide_number)
+        return "(스크립트를 생성할 수 없었습니다.)"
+
+    text_block = next((b for b in response.content if b.type == "text"), None)
+    if text_block is None:
+        logger.warning("슬라이드 %d: 텍스트 블록 없음", slide.slide_number)
+        return "(스크립트를 생성할 수 없었습니다.)"
+
+    return text_block.text

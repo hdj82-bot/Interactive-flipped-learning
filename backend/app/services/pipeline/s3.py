@@ -125,3 +125,13 @@ def upload_audio_bytes(audio_bytes: bytes, render_id: str, ext: str = "mp3") -> 
     s3 = get_s3_client()
     s3.put_object(Bucket=settings.S3_BUCKET, Key=s3_key, Body=audio_bytes, ContentType=f"audio/{ext}")
     return f"https://{settings.S3_BUCKET}.s3.{settings.AWS_REGION}.amazonaws.com/{s3_key}"
+
+
+def upload_thumbnail(image_bytes: bytes, s3_key: str) -> str:
+    """썸네일 이미지를 S3에 업로드."""
+    s3 = get_s3_client()
+    s3.put_object(
+        Bucket=settings.S3_BUCKET, Key=s3_key, Body=image_bytes,
+        ContentType="image/jpeg", CacheControl="public, max-age=86400",
+    )
+    return f"https://{settings.S3_BUCKET}.s3.{settings.AWS_REGION}.amazonaws.com/{s3_key}"

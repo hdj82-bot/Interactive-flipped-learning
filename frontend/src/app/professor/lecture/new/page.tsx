@@ -3,9 +3,11 @@
 import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { useToast } from "@/components/ui/Toast";
 
 export default function NewLecturePage() {
   const router = useRouter();
+  const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [title, setTitle] = useState("");
@@ -53,9 +55,11 @@ export default function NewLecturePage() {
         });
       }
 
+      toast("강의가 생성되었습니다.", "success");
       router.push(`/professor/lecture/${lecture.id}`);
     } catch {
       setError("강의 생성에 실패했습니다. 다시 시도해주세요.");
+      toast("강의 생성에 실패했습니다.", "error");
     }
     setSubmitting(false);
   };

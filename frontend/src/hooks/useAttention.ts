@@ -15,8 +15,8 @@ export function useAttention({ sessionId, heartbeatInterval = 10_000, noResponse
   const [message, setMessage] = useState<string | null>(null);
   const progressRef = useRef(0);
   const lastResponseRef = useRef(Date.now());
-  const heartbeatTimer = useRef<ReturnType<typeof setInterval>>();
-  const noResponseTimer = useRef<ReturnType<typeof setInterval>>();
+  const heartbeatTimer = useRef<ReturnType<typeof setInterval>>(undefined);
+  const noResponseTimer = useRef<ReturnType<typeof setInterval>>(undefined);
 
   const setProgress = useCallback((seconds: number) => {
     progressRef.current = seconds;

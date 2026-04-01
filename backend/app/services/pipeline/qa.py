@@ -56,12 +56,30 @@ def answer_question(db: Session, task_id: str, session_id: str, question: str) -
     context = _build_context(results)
     client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
 
-    response = client.messages.create(
-        model=settings.CLAUDE_MODEL, max_tokens=1024, system=QA_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": f"## 참고 슬라이드 내용\n{context}\n\n## 학습자 질문\n{question}"}],
-    )
+    try:
+        response = client.messages.create(
+            model=settings.CLAUDE_MODEL, max_tokens=1024, system=QA_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": f"## 참고 슬라이드 내용\n{context}\n\n## 학습자 질문\n{question}"}],
+        )
+    except anthropic.APIError as exc:
+        logger.error("Q&A Claude API 호출 실패: %s", exc)
+        return QAResult(
+            answer="죄송합니다. 일시적인 오류로 답변을 생성하지 못했습니다. 잠시 후 다시 시도해주세요.",
+            in_scope=True, top_slides=results,
+            input_tokens=0, output_tokens=0, cost_usd=0.0,
+        )
 
-    answer = response.content[0].text
+    if not response.content:
+        logger.warning("Q&A: Claude API가 빈 응답을 반환")
+        return QAResult(
+            answer="답변을 생성하지 못했습니다. 질문을 다시 작성해주세요.",
+            in_scope=True, top_slides=results,
+            input_tokens=0, output_tokens=0, cost_usd=0.0,
+        )
+
+    text_block = next((b for b in response.content if b.type == "text"), None)
+    answer = text_block.text if text_block else "답변을 생성하지 못했습니다."
+
     input_tokens = response.usage.input_tokens
     output_tokens = response.usage.output_tokens
     cost = input_tokens * INPUT_COST_PER_TOKEN + output_tokens * OUTPUT_COST_PER_TOKEN

@@ -1,11 +1,11 @@
-"""요청 로깅 + 메트릭 미들웨어."""
+"""요청 로깅 + 메트릭 + Rate Limiting 미들웨어."""
 import logging
 import time
 import uuid
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 
 logger = logging.getLogger("ifl.access")
 
@@ -29,3 +29,71 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         response.headers["X-Request-ID"] = request_id
         return response
+
+
+# ── Rate Limiting ─────────────────────────────────────────────────────
+
+# 경로별 레이트 제한 설정 (requests, window_seconds)
+RATE_LIMITS: dict[str, tuple[int, int]] = {
+    "/api/v1/render/upload": (5, 60),       # PPT 업로드: 분당 5회
+    "/api/v1/render": (10, 60),             # 렌더링 요청: 분당 10회
+    "/api/v1/qa": (30, 60),                 # Q&A: 분당 30회
+    "/api/auth/google": (10, 60),           # OAuth: 분당 10회
+}
+
+# 전체 API 기본 제한
+DEFAULT_RATE_LIMIT = (120, 60)  # 분당 120회
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Redis 기반 슬라이딩 윈도우 Rate Limiter."""
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        # 정적 파일, 헬스체크, 웹훅은 제외
+        path = request.url.path
+        if path in ("/health", "/docs", "/openapi.json") or path.startswith("/api/v1/webhooks"):
+            return await call_next(request)
+
+        try:
+            from app.core.redis import get_redis
+            redis = get_redis()
+        except Exception:
+            # Redis 연결 실패 시 rate limiting 건너뜀
+            return await call_next(request)
+
+        # 클라이언트 식별: Authorization 토큰 또는 IP
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            # 토큰의 마지막 8자를 키로 사용 (전체 토큰은 너무 김)
+            client_id = f"user:{auth[-8:]}"
+        else:
+            client_id = f"ip:{request.client.host if request.client else 'unknown'}"
+
+        # 경로별 제한 확인
+        max_requests, window = DEFAULT_RATE_LIMIT
+        for prefix, limit in RATE_LIMITS.items():
+            if path.startswith(prefix):
+                max_requests, window = limit
+                break
+
+        key = f"rl:{client_id}:{path.split('/')[1:4]}"  # 경로 그룹 기준
+
+        try:
+            current = await redis.incr(key)
+            if current == 1:
+                await redis.expire(key, window)
+
+            remaining = max(0, max_requests - current)
+            response = await call_next(request) if current <= max_requests else JSONResponse(
+                status_code=429,
+                content={"detail": "요청이 너무 많습니다. 잠시 후 다시 시도해주세요."},
+            )
+
+            response.headers["X-RateLimit-Limit"] = str(max_requests)
+            response.headers["X-RateLimit-Remaining"] = str(remaining)
+            response.headers["X-RateLimit-Reset"] = str(window)
+            return response
+
+        except Exception:
+            # Redis 오류 시 요청을 차단하지 않음
+            return await call_next(request)

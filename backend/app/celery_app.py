@@ -18,11 +18,15 @@ celery.conf.update(
     worker_prefetch_multiplier=1,
 )
 
-# 10분 간격 fallback 폴링 스케줄
+# 스케줄 태스크
 celery.conf.beat_schedule = {
     "poll-heygen-pending-jobs": {
         "task": "app.tasks.polling.poll_pending_renders",
-        "schedule": settings.POLLING_INTERVAL_SECONDS,
+        "schedule": settings.POLLING_INTERVAL_SECONDS,  # 10분 간격
+    },
+    "cleanup-stale-sessions": {
+        "task": "app.tasks.cleanup.cleanup_stale_sessions",
+        "schedule": 3600,  # 1시간 간격
     },
 }
 

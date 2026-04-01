@@ -59,13 +59,14 @@ async def update_session_status(
                    f"가능한 상태: [{', '.join(s.value for s in allowed)}]",
         )
 
+    from_status = session.status
     session.status = new_status
     session.last_active_at = datetime.now(timezone.utc)
 
     if new_status == SessionStatus.paused:
         session.pause_reason = pause_reason or "network_disconnect"
         session.is_paused = True
-    elif session.status == SessionStatus.paused and new_status == SessionStatus.in_progress:
+    elif from_status == SessionStatus.paused and new_status == SessionStatus.in_progress:
         session.pause_reason = None
         session.is_paused = False
 
@@ -73,9 +74,9 @@ async def update_session_status(
         session.no_response_cnt += 1
 
     if watched_sec is not None:
-        session.watched_sec = watched_sec
+        session.watched_sec = max(0, watched_sec)
     if progress_pct is not None:
-        session.progress_pct = progress_pct
+        session.progress_pct = max(0.0, min(100.0, progress_pct))
 
     await db.commit()
     await db.refresh(session)
@@ -203,6 +204,17 @@ async def resume_session(db: AsyncSession, session_id: uuid.UUID) -> LearningSes
     session = result.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
+
+    # 완료된 세션은 재개 불가
+    if session.status == SessionStatus.completed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="이미 완료된 세션은 재개할 수 없습니다.",
+        )
+
+    # 일시정지 상태가 아닌 경우 무시 (이미 재개됨)
+    if not session.is_paused:
+        return session
 
     session.is_paused = False
     session.warning_level = max(session.warning_level - 1, 0)

@@ -1,4 +1,9 @@
+import logging
+import warnings
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -83,8 +88,34 @@ class Settings(BaseSettings):
     STRIPE_PRICE_BASIC: str = ""   # Stripe Price ID for BASIC plan
     STRIPE_PRICE_PRO: str = ""     # Stripe Price ID for PRO plan
 
+    # ── pgvector ──────────────────────────────────────────────────
+    SIMILARITY_THRESHOLD: float = 0.7
+
     # ── Frontend ────────────────────────────────────────────────
     FRONTEND_URL: str = "http://localhost:3000"
 
 
 settings = Settings()
+
+
+def _validate_settings() -> None:
+    """프로덕션 환경에서 필수 설정값 검증."""
+    if settings.ENVIRONMENT == "production":
+        if settings.JWT_SECRET_KEY == "change-me-in-production":
+            raise RuntimeError("프로덕션에서 JWT_SECRET_KEY를 반드시 변경해야 합니다.")
+        if not settings.HEYGEN_WEBHOOK_SECRET:
+            warnings.warn("HEYGEN_WEBHOOK_SECRET이 설정되지 않았습니다. 웹훅 검증이 비활성화됩니다.", stacklevel=2)
+        if not settings.STRIPE_WEBHOOK_SECRET:
+            warnings.warn("STRIPE_WEBHOOK_SECRET이 설정되지 않았습니다.", stacklevel=2)
+
+    # 개발/프로덕션 공통: 핵심 API 키 경고
+    missing_keys = []
+    if not settings.ANTHROPIC_API_KEY:
+        missing_keys.append("ANTHROPIC_API_KEY")
+    if not settings.OPENAI_API_KEY:
+        missing_keys.append("OPENAI_API_KEY")
+    if missing_keys:
+        logger.warning("필수 API 키 미설정: %s — 관련 기능이 작동하지 않습니다.", ", ".join(missing_keys))
+
+
+_validate_settings()

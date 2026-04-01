@@ -97,11 +97,11 @@ export default function LoginContent() {
 
           <p className="text-center text-xs text-gray-400">
             로그인 시{" "}
-            <a href="#" className="underline hover:text-gray-600">
+            <a href="/terms" className="underline hover:text-gray-600">
               이용약관
             </a>{" "}
             및{" "}
-            <a href="#" className="underline hover:text-gray-600">
+            <a href="/privacy" className="underline hover:text-gray-600">
               개인정보처리방침
             </a>
             에 동의합니다.

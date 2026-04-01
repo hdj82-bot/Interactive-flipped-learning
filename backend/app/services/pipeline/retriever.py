@@ -7,11 +7,13 @@ from dataclasses import dataclass
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.services.pipeline.embedding import get_embeddings
 
 logger = logging.getLogger(__name__)
 
-SIMILARITY_THRESHOLD = 0.75
+# 설정 가능한 유사도 임계값 (기본 0.7 — 0.75는 너무 엄격하여 관련 결과 누락 가능)
+SIMILARITY_THRESHOLD = float(getattr(settings, "SIMILARITY_THRESHOLD", 0.7))
 
 
 @dataclass
@@ -23,9 +25,17 @@ class RetrievalResult:
 
 def search_similar_slides(
     db: Session, task_id: str, query: str, top_k: int = 3,
+    threshold: float | None = None,
 ) -> list[RetrievalResult]:
     """질문 텍스트로 pgvector 코사인 유사도 검색."""
-    query_embedding = get_embeddings([query])[0]
+    try:
+        query_embedding = get_embeddings([query])[0]
+    except Exception as exc:
+        logger.error("임베딩 생성 실패: query=%s, error=%s", query[:100], exc)
+        return []
+
+    # 벡터를 PostgreSQL array 문자열로 변환 (파라미터 바인딩으로 안전하게 전달)
+    vec_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
 
     sql = text("""
         SELECT slide_number, text_content,
@@ -36,10 +46,20 @@ def search_similar_slides(
         LIMIT :top_k
     """)
 
-    rows = db.execute(sql, {"query_vec": str(query_embedding), "task_id": task_id, "top_k": top_k}).fetchall()
+    try:
+        rows = db.execute(
+            sql, {"query_vec": vec_str, "task_id": task_id, "top_k": top_k}
+        ).fetchall()
+    except Exception as exc:
+        logger.error("pgvector 검색 실패: task_id=%s, error=%s", task_id, exc)
+        return []
 
     results = [
-        RetrievalResult(slide_number=row.slide_number, text_content=row.text_content, similarity=float(row.similarity))
+        RetrievalResult(
+            slide_number=row.slide_number,
+            text_content=row.text_content,
+            similarity=float(row.similarity),
+        )
         for row in rows
     ]
 
@@ -50,7 +70,7 @@ def search_similar_slides(
     return results
 
 
-def is_in_scope(results: list[RetrievalResult]) -> bool:
+def is_in_scope(results: list[RetrievalResult], threshold: float | None = None) -> bool:
     if not results:
         return False
-    return results[0].similarity >= SIMILARITY_THRESHOLD
+    return results[0].similarity >= (threshold or SIMILARITY_THRESHOLD)

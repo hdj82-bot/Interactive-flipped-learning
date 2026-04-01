@@ -1,7 +1,7 @@
 """세션 관리 API (NestJS SessionController 포팅)."""
 import uuid
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_student
@@ -20,6 +20,11 @@ async def create_session(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_student),
 ):
+    if total_sec <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="total_sec는 양수여야 합니다.",
+        )
     session = await session_svc.create_session(db, user.id, lecture_id, total_sec)
     return {"id": str(session.id), "status": session.status.value}
 
@@ -27,15 +32,25 @@ async def create_session(
 @router.patch("/{session_id}", summary="세션 상태 업데이트")
 async def update_session(
     session_id: uuid.UUID,
-    status: str,
+    status_param: str = Query(..., alias="status"),
     watched_sec: int | None = None,
     progress_pct: float | None = None,
     pause_reason: str | None = None,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_student),
 ):
+    # SessionStatus enum 검증
+    try:
+        new_status = SessionStatus(status_param)
+    except ValueError:
+        valid = [s.value for s in SessionStatus]
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"유효하지 않은 상태: '{status_param}'. 가능한 값: {valid}",
+        )
+
     session = await session_svc.update_session_status(
-        db, user.id, session_id, SessionStatus(status),
+        db, user.id, session_id, new_status,
         watched_sec=watched_sec, progress_pct=progress_pct, pause_reason=pause_reason,
     )
     return {"id": str(session.id), "status": session.status.value}

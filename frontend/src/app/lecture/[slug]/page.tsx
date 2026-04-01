@@ -4,6 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/components/ui/Toast";
 import { useAttention } from "@/hooks/useAttention";
 import Header from "@/components/Header";
 import AttentionPauseOverlay from "@/components/AttentionPauseOverlay";
@@ -39,8 +40,10 @@ export default function LectureViewerPage() {
   const qaEndRef = useRef<HTMLDivElement>(null);
 
   // Video
+  const { toast } = useToast();
   const videoRef = useRef<HTMLVideoElement>(null);
   const [progress, setProgress] = useState(0);
+  const [duration, setDuration] = useState(0);
 
   // 강의 로드
   useEffect(() => {
@@ -54,13 +57,13 @@ export default function LectureViewerPage() {
     })();
   }, [slug, router]);
 
-  // 세션 시작
+  // 세션 시작 (duration이 결정된 후)
   useEffect(() => {
-    if (!lecture || !user) return;
+    if (!lecture || !user || !duration) return;
     (async () => {
       try {
         const { data } = await api.post("/api/v1/sessions", null, {
-          params: { lecture_id: lecture.id, total_sec: 1800 },
+          params: { lecture_id: lecture.id, total_sec: Math.ceil(duration) },
         });
         setSessionId(data.id);
         await api.post("/api/v1/attention/start", {
@@ -68,7 +71,7 @@ export default function LectureViewerPage() {
         });
       } catch { /* ignore */ }
     })();
-  }, [lecture, user]);
+  }, [lecture, user, duration]);
 
   // 집중도 추적
   const attention = useAttention({ sessionId: sessionId || "", heartbeatInterval: 10_000, noResponseTimeout: 30_000 });
@@ -79,6 +82,18 @@ export default function LectureViewerPage() {
     const sec = Math.floor(videoRef.current.currentTime);
     setProgress(sec);
     attention.setProgress(sec);
+  };
+
+  const handleLoadedMetadata = () => {
+    if (videoRef.current) {
+      setDuration(videoRef.current.duration);
+    }
+  };
+
+  const formatTime = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${s.toString().padStart(2, "0")}`;
   };
 
   // Q&A 전송
@@ -95,7 +110,7 @@ export default function LectureViewerPage() {
       });
       setQaMessages((prev) => [...prev, { role: "assistant", text: data.answer }]);
     } catch {
-      setQaMessages((prev) => [...prev, { role: "assistant", text: "오류가 발생했습니다. 다시 시도해주세요." }]);
+      setQaMessages((prev) => [...prev, { role: "assistant", text: "답변 생성에 실패했습니다. 잠시 후 다시 시도해주세요." }]);
     }
     setQaLoading(false);
     setTimeout(() => qaEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
@@ -126,18 +141,29 @@ export default function LectureViewerPage() {
                   src={lecture.video_url}
                   controls
                   onTimeUpdate={handleTimeUpdate}
+                  onLoadedMetadata={handleLoadedMetadata}
                   className="w-full h-full"
                 />
               ) : (
                 <div className="w-full h-full flex items-center justify-center text-gray-500">
-                  영상이 아직 준비되지 않았습니다
+                  <div className="text-center">
+                    <svg className="w-12 h-12 mx-auto mb-2 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    <p>영상이 아직 준비되지 않았습니다</p>
+                    <p className="text-sm text-gray-600 mt-1">렌더링이 완료되면 자동으로 표시됩니다</p>
+                  </div>
                 </div>
               )}
             </div>
 
             {/* 진행 바 */}
-            <div className="mt-2 bg-gray-700 rounded-full h-1.5">
-              <div className="bg-indigo-500 h-1.5 rounded-full transition-all" style={{ width: `${Math.min((progress / 1800) * 100, 100)}%` }} />
+            <div className="mt-2 flex items-center gap-2">
+              <span className="text-xs text-gray-400 tabular-nums w-10">{formatTime(progress)}</span>
+              <div className="flex-1 bg-gray-700 rounded-full h-1.5">
+                <div className="bg-indigo-500 h-1.5 rounded-full transition-all" style={{ width: duration > 0 ? `${Math.min((progress / duration) * 100, 100)}%` : "0%" }} />
+              </div>
+              <span className="text-xs text-gray-400 tabular-nums w-10 text-right">{duration > 0 ? formatTime(duration) : "--:--"}</span>
             </div>
 
             <div className="mt-4 flex gap-3">

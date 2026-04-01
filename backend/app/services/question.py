@@ -1,6 +1,8 @@
 """문제 생성 및 제공 서비스."""
 import json
+import logging
 import random
+import re
 import uuid
 from typing import Any
 
@@ -11,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.question import AssessmentType, Question
 from app.models.session import LearningSession, SessionStatus
+
+logger = logging.getLogger(__name__)
 
 
 # ── Claude API 프롬프트 ────────────────────────────────────────────────────────
@@ -81,55 +85,149 @@ async def generate_questions(
     video_duration_seconds: int,
 ) -> tuple[int, int]:
     """Claude API로 문제를 생성해 DB에 저장. (formative_created, summative_created) 반환."""
+
+    # 기존 문제가 있으면 중복 생성 방지
+    existing = await db.execute(
+        select(Question).where(Question.lecture_id == lecture_id).limit(1)
+    )
+    if existing.scalars().first() is not None:
+        logger.info("lecture %s: 이미 문제가 존재하여 생성 건너뜀", lecture_id)
+        count_result = await db.execute(
+            select(Question).where(Question.lecture_id == lecture_id)
+        )
+        all_existing = list(count_result.scalars().all())
+        f_count = sum(1 for q in all_existing if q.assessment_type == AssessmentType.formative)
+        s_count = sum(1 for q in all_existing if q.assessment_type == AssessmentType.summative)
+        return f_count, s_count
+
     client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
 
-    response = client.messages.create(
-        model="claude-opus-4-6",
-        max_tokens=8192,
-        thinking={"type": "adaptive"},
-        system=_SYSTEM_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": _build_user_prompt(
-                    ppt_content, formative_count, summative_count, video_duration_seconds
-                ),
-            }
-        ],
-    )
+    try:
+        response = client.messages.create(
+            model="claude-opus-4-6",
+            max_tokens=8192,
+            thinking={"type": "adaptive"},
+            system=_SYSTEM_PROMPT,
+            messages=[
+                {
+                    "role": "user",
+                    "content": _build_user_prompt(
+                        ppt_content, formative_count, summative_count, video_duration_seconds
+                    ),
+                }
+            ],
+        )
+    except anthropic.APIError as exc:
+        logger.error("Claude API 호출 실패: %s", exc)
+        raise RuntimeError(f"문제 생성 API 호출 실패: {exc}") from exc
 
     # 텍스트 블록에서 JSON 추출
     raw_text = next(
         (block.text for block in response.content if block.type == "text"), ""
     )
-    data: dict[str, Any] = json.loads(raw_text)
+    data = _parse_json_response(raw_text)
 
     formative_items: list[dict] = data.get("formative", [])
     summative_items: list[dict] = data.get("summative", [])
 
-    def _make_question(item: dict, assessment_type: AssessmentType) -> Question:
+    def _validate_item(item: dict, assessment_type: AssessmentType) -> Question | None:
+        """개별 문제 항목을 검증하고 Question 객체를 생성."""
+        content = item.get("content")
+        question_type = item.get("question_type", "multiple_choice")
+        if not content:
+            logger.warning("문제 content 누락, 건너뜀: %s", item)
+            return None
+
+        # 객관식: options 4개, correct_answer 0~3 검증
+        options = item.get("options")
+        correct_answer = item.get("correct_answer")
+        if question_type == "multiple_choice":
+            if not isinstance(options, list) or len(options) != 4:
+                logger.warning("객관식 options가 4개가 아님, 건너뜀: %s", item.get("content", "")[:50])
+                return None
+            if str(correct_answer).strip() not in ("0", "1", "2", "3"):
+                logger.warning("객관식 correct_answer 범위 초과: %s", correct_answer)
+                return None
+            correct_answer = str(correct_answer).strip()
+
+        # 난이도 검증
+        difficulty = item.get("difficulty", "medium")
+        if difficulty not in ("easy", "medium", "hard"):
+            difficulty = "medium"
+
+        # timestamp 검증
+        timestamp = item.get("timestamp_seconds")
+        if assessment_type == AssessmentType.formative and timestamp is not None:
+            if not isinstance(timestamp, (int, float)) or timestamp < 0:
+                timestamp = None
+            elif video_duration_seconds > 0 and timestamp > video_duration_seconds:
+                timestamp = video_duration_seconds
+            else:
+                timestamp = int(timestamp)
+        elif assessment_type == AssessmentType.summative:
+            timestamp = None
+
         return Question(
             lecture_id=lecture_id,
             assessment_type=assessment_type,
-            question_type=item["question_type"],
-            difficulty=item.get("difficulty", "medium"),
-            content=item["content"],
-            options=item.get("options"),
-            correct_answer=item.get("correct_answer"),
+            question_type=question_type,
+            difficulty=difficulty,
+            content=content,
+            options=options,
+            correct_answer=correct_answer,
             explanation=item.get("explanation"),
-            timestamp_seconds=item.get("timestamp_seconds"),
+            timestamp_seconds=timestamp,
         )
 
-    questions = [
-        _make_question(item, AssessmentType.formative) for item in formative_items
-    ] + [
-        _make_question(item, AssessmentType.summative) for item in summative_items
-    ]
+    questions: list[Question] = []
+    for item in formative_items:
+        q = _validate_item(item, AssessmentType.formative)
+        if q:
+            questions.append(q)
+    for item in summative_items:
+        q = _validate_item(item, AssessmentType.summative)
+        if q:
+            questions.append(q)
+
+    if not questions:
+        raise RuntimeError("Claude API가 유효한 문제를 생성하지 못했습니다.")
 
     db.add_all(questions)
     await db.commit()
 
-    return len(formative_items), len(summative_items)
+    f_created = sum(1 for q in questions if q.assessment_type == AssessmentType.formative)
+    s_created = sum(1 for q in questions if q.assessment_type == AssessmentType.summative)
+    return f_created, s_created
+
+
+def _parse_json_response(raw_text: str) -> dict[str, Any]:
+    """Claude 응답에서 JSON을 추출. 마크다운 코드블록도 처리."""
+    if not raw_text.strip():
+        raise RuntimeError("Claude API가 빈 응답을 반환했습니다.")
+
+    # 마크다운 코드 블록 내 JSON 추출 시도
+    code_block = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", raw_text, re.DOTALL)
+    text_to_parse = code_block.group(1) if code_block else raw_text
+
+    try:
+        data = json.loads(text_to_parse)
+    except json.JSONDecodeError:
+        # 중괄호로 감싸진 부분만 추출 시도
+        brace_match = re.search(r"\{.*\}", text_to_parse, re.DOTALL)
+        if brace_match:
+            try:
+                data = json.loads(brace_match.group(0))
+            except json.JSONDecodeError as exc:
+                logger.error("JSON 파싱 최종 실패: %s", raw_text[:500])
+                raise RuntimeError("Claude API 응답을 JSON으로 파싱할 수 없습니다.") from exc
+        else:
+            logger.error("JSON 구조를 찾을 수 없음: %s", raw_text[:500])
+            raise RuntimeError("Claude API 응답에서 JSON 구조를 찾을 수 없습니다.")
+
+    if not isinstance(data, dict):
+        raise RuntimeError("Claude API 응답이 JSON 객체가 아닙니다.")
+
+    return data
 
 
 # ── 문제 제공 (랜덤화) ────────────────────────────────────────────────────────

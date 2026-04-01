@@ -98,7 +98,13 @@ async def upload_ppt(
     if not file.filename or not file.filename.endswith(".pptx"):
         raise HTTPException(status_code=400, detail=".pptx 파일만 업로드 가능합니다.")
 
+    # 파일 크기 제한 (100MB)
+    MAX_FILE_SIZE = 100 * 1024 * 1024
     content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="파일 크기가 100MB를 초과합니다.")
+    if len(content) == 0:
+        raise HTTPException(status_code=400, detail="빈 파일은 업로드할 수 없습니다.")
     task_id = str(uuid.uuid4())
 
     # S3에 PPT 업로드

@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useToast } from "@/components/ui/Toast";
+import Modal from "@/components/ui/Modal";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 
 interface SubscriptionData { user_id: string; plan: string; monthly_limit: number; }
@@ -14,10 +16,12 @@ const PLANS = [
 ];
 
 export default function SubscriptionPage() {
+  const { toast } = useToast();
   const [sub, setSub] = useState<SubscriptionData | null>(null);
   const [usage, setUsage] = useState<UsageData | null>(null);
   const [loading, setLoading] = useState(true);
   const [changing, setChanging] = useState(false);
+  const [confirmPlan, setConfirmPlan] = useState<string | null>(null);
 
   const fetchData = async () => {
     try {
@@ -27,22 +31,31 @@ export default function SubscriptionPage() {
       ]);
       setSub(s);
       setUsage(u);
-    } catch { /* ignore */ }
+    } catch {
+      toast("구독 정보를 불러오지 못했습니다.", "error");
+    }
     setLoading(false);
   };
 
   useEffect(() => { fetchData(); }, []);
 
-  const handleChangePlan = async (plan: string) => {
+  const handleChangePlan = async () => {
+    if (!confirmPlan) return;
     setChanging(true);
     try {
-      await api.post(`/api/v1/subscription?plan=${plan}`);
+      await api.post(`/api/v1/subscription?plan=${confirmPlan}`);
       await fetchData();
-    } catch { /* ignore */ }
+      toast("플랜이 변경되었습니다.", "success");
+    } catch {
+      toast("플랜 변경에 실패했습니다.", "error");
+    }
     setChanging(false);
+    setConfirmPlan(null);
   };
 
   if (loading) return <LoadingSpinner fullScreen label="구독 정보 불러오는 중..." />;
+
+  const confirmPlanInfo = PLANS.find((p) => p.name === confirmPlan);
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -56,8 +69,9 @@ export default function SubscriptionPage() {
             <span className="text-sm text-gray-500">{usage.used} / {usage.monthly_limit}편</span>
           </div>
           <div className="bg-gray-100 rounded-full h-3">
-            <div className="bg-indigo-500 h-3 rounded-full transition-all"
-              style={{ width: `${Math.min((usage.used / usage.monthly_limit) * 100, 100)}%` }} />
+            <div className={`h-3 rounded-full transition-all ${
+              usage.used / usage.monthly_limit > 0.8 ? "bg-amber-500" : "bg-indigo-500"
+            }`} style={{ width: `${Math.min((usage.used / usage.monthly_limit) * 100, 100)}%` }} />
           </div>
           <p className="text-xs text-gray-400 mt-2">남은 횟수: {usage.remaining}편</p>
         </div>
@@ -69,31 +83,65 @@ export default function SubscriptionPage() {
           const isCurrent = sub?.plan === plan.name;
           return (
             <div key={plan.name}
-              className={`border rounded-2xl p-6 transition ${isCurrent ? "border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500" : "border-gray-200 bg-white"}`}>
+              className={`border rounded-2xl p-6 transition ${isCurrent ? "border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500" : "border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm"}`}>
               <div className="mb-4">
-                <h3 className="text-lg font-bold text-gray-900">{plan.label}</h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-lg font-bold text-gray-900">{plan.label}</h3>
+                  {isCurrent && <span className="text-xs bg-indigo-600 text-white px-2 py-0.5 rounded-full">현재</span>}
+                </div>
                 <p className="text-2xl font-bold text-indigo-600 mt-1">{plan.price}</p>
                 <p className="text-xs text-gray-400">월 {plan.limit}편 렌더링</p>
               </div>
               <ul className="space-y-2 mb-6">
                 {plan.features.map((f) => (
                   <li key={f} className="text-sm text-gray-600 flex items-center gap-2">
-                    <span className="text-green-500 text-xs">&#10003;</span> {f}
+                    <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    {f}
                   </li>
                 ))}
               </ul>
               {isCurrent ? (
-                <span className="block text-center text-sm font-medium text-indigo-600">현재 플랜</span>
+                <span className="block text-center text-sm font-medium text-indigo-600 py-2.5">사용 중</span>
               ) : (
-                <button onClick={() => handleChangePlan(plan.name)} disabled={changing}
+                <button onClick={() => setConfirmPlan(plan.name)} disabled={changing}
                   className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl py-2.5 text-sm font-medium transition">
-                  {changing ? "변경 중..." : "변경하기"}
+                  변경하기
                 </button>
               )}
             </div>
           );
         })}
       </div>
+
+      {/* 플랜 변경 확인 모달 */}
+      <Modal open={!!confirmPlan} onClose={() => setConfirmPlan(null)} title="플랜 변경">
+        {confirmPlanInfo && (
+          <div className="space-y-4 pt-2">
+            <p className="text-sm text-gray-600">
+              <span className="font-medium text-gray-900">{confirmPlanInfo.label}</span> 플랜({confirmPlanInfo.price})으로 변경하시겠습니까?
+            </p>
+            {confirmPlanInfo.name === "FREE" && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+                <p className="text-sm text-amber-700">
+                  무료 플랜으로 변경하면 월 렌더링 한도가 2편으로 줄어듭니다.
+                </p>
+              </div>
+            )}
+            <div className="flex gap-3 justify-end pt-2">
+              <button onClick={() => setConfirmPlan(null)}
+                className="text-sm border border-gray-300 rounded-xl px-4 py-2 hover:bg-gray-50 transition">
+                취소
+              </button>
+              <button onClick={handleChangePlan} disabled={changing}
+                className="text-sm bg-indigo-600 text-white rounded-xl px-4 py-2 hover:bg-indigo-700 disabled:opacity-50 transition">
+                {changing ? "변경 중..." : "변경하기"}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
